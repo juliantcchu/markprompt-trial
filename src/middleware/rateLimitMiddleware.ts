@@ -11,8 +11,6 @@ import {
   RateLimitStrategyService,
   FixedWindowStrategyLive,
   SlidingWindowStrategyLive,
-  TokenBucketStrategyLive,
-  LeakyBucketStrategyLive,
   DefaultStrategyLive
 } from '../ratelimiter/strategies';
 
@@ -66,8 +64,8 @@ export const rateLimitMiddleware = (req: Request): Effect.Effect<{
     // Get config service
     const configService = yield* RateLimitConfigProvider;
     
-    // Get rate limit configuration for this user
-    const config = configService.getRateLimitConfig(identity);
+    // Get rate limit configuration for this user (now returns an Effect)
+    const config = yield* configService.getRateLimitConfig(identity);
     
     // Create key for rate limiting (combine user ID or IP with path)
     const path = new URL(req.url).pathname;
@@ -116,17 +114,6 @@ export const RateLimitSlidingWindowLive = RedisClientLive.pipe(
   Layer.provideMerge(SlidingWindowStrategyLive)
 );
 
-export const RateLimitTokenBucketLive = RedisClientLive.pipe(
-  Layer.provideMerge(RedisStorageLive),
-  Layer.provideMerge(RateLimitConfigLive),
-  Layer.provideMerge(TokenBucketStrategyLive)
-);
-
-export const RateLimitLeakyBucketLive = RedisClientLive.pipe(
-  Layer.provideMerge(RedisStorageLive),
-  Layer.provideMerge(RateLimitConfigLive),
-  Layer.provideMerge(LeakyBucketStrategyLive)
-);
 
 // 2. In-memory based layers with different strategies
 export const RateLimitFixedWindowInMemoryLive = Layer.merge(
@@ -137,16 +124,6 @@ export const RateLimitFixedWindowInMemoryLive = Layer.merge(
 export const RateLimitSlidingWindowInMemoryLive = Layer.merge(
   InMemoryStorageLive,
   Layer.merge(RateLimitConfigLive, SlidingWindowStrategyLive)
-);
-
-export const RateLimitTokenBucketInMemoryLive = Layer.merge(
-  InMemoryStorageLive,
-  Layer.merge(RateLimitConfigLive, TokenBucketStrategyLive)
-);
-
-export const RateLimitLeakyBucketInMemoryLive = Layer.merge(
-  InMemoryStorageLive,
-  Layer.merge(RateLimitConfigLive, LeakyBucketStrategyLive)
 );
 
 // Default layers (sliding window is a good default)
@@ -163,16 +140,12 @@ export const getRateLimitLayer = (
   if (useRedis) {
     switch (algorithm) {
       case 'fixed-window': return RateLimitFixedWindowLive;
-      case 'token-bucket': return RateLimitTokenBucketLive;
-      case 'leaky-bucket': return RateLimitLeakyBucketLive;
       case 'sliding-window':
       default: return RateLimitSlidingWindowLive;
     }
   } else {
     switch (algorithm) {
       case 'fixed-window': return RateLimitFixedWindowInMemoryLive;
-      case 'token-bucket': return RateLimitTokenBucketInMemoryLive;
-      case 'leaky-bucket': return RateLimitLeakyBucketInMemoryLive;
       case 'sliding-window':
       default: return RateLimitSlidingWindowInMemoryLive;
     }

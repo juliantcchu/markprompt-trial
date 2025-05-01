@@ -36,21 +36,7 @@ export class RateLimitStorageService extends Context.Tag("RateLimitStorageServic
   RateLimitStorage
 >() {}
 
-// Get rate limit config for a user - default implementation
-export const getRateLimitConfig = (identity: UserIdentity): RateLimitConfig => {
-  // Check for user override
-  if (identity.userId && userOverrides[identity.userId]) {
-    return userOverrides[identity.userId];
-  }
-
-  // Get limit by role
-  if (identity.role && rateLimitByRole[identity.role as keyof typeof rateLimitByRole]) {
-    return rateLimitByRole[identity.role as keyof typeof rateLimitByRole];
-  }
-
-  // Default rate limit
-  return defaultRateLimit;
-};
+// Get rate limit config for a user - default implementation (removed since now handled by the config service)
 
 // Check rate limit using Effect
 export const checkRateLimit = (
@@ -90,7 +76,7 @@ export const checkRateLimit = (
 export const setUserRateLimit = (
   userId: string, 
   config: RateLimitConfig
-): Effect.Effect<void, never, RateLimitConfigProvider> => {
+): Effect.Effect<void, Error, RateLimitConfigProvider> => {
   return Effect.gen(function* (_) {
     const configService = yield* RateLimitConfigProvider;
     yield* configService.setUserRateLimit(userId, config);

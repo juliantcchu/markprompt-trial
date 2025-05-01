@@ -6,8 +6,6 @@ import {
   applyRateLimitHeaders, 
   getRateLimitLayer,
   RateLimitLive,
-  RateLimitTokenBucketLive,
-  RateLimitLeakyBucketLive,
   RateLimitFixedWindowLive 
 } from './middleware/rateLimitMiddleware';
 import { handleAdminRateLimitOverride } from './routes/admin';
@@ -171,95 +169,7 @@ const server = serve({
       }
     },
     
-    // Demo endpoints for different rate limiting strategies
-    "/api/demo/token-bucket": async (req) => {
-      try {
-        // Apply TOKEN BUCKET rate limiting
-        const rateLimitEffect = rateLimitMiddleware(req);
-        const { rateLimit, identity } = await Effect.runPromise(
-          Effect.provide(rateLimitEffect, RateLimitTokenBucketLive)
-        );
-        
-        // Update stats
-        updateStats(!rateLimit.isAllowed, '/api/demo/token-bucket', identity.userId);
-        
-        // If rate limit exceeded, return 429
-        if (!rateLimit.isAllowed) {
-          const response = new Response(JSON.stringify({
-            error: 'Too Many Requests',
-            message: 'Rate limit exceeded using Token Bucket algorithm',
-          }), { 
-            status: 429,
-            headers: { 'Content-Type': 'application/json' }
-          });
-          
-          return applyRateLimitHeaders(response, rateLimit);
-        }
-        
-        // Normal response
-        const response = new Response(JSON.stringify({
-          message: "This endpoint uses Token Bucket rate limiting",
-          tokens_remaining: rateLimit.remaining,
-          reset_at: new Date(rateLimit.resetTime).toISOString()
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        return applyRateLimitHeaders(response, rateLimit);
-      } catch (error) {
-        console.error('Route handler error:', error);
-        return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-    },
-    
-    "/api/demo/leaky-bucket": async (req) => {
-      try {
-        // Apply LEAKY BUCKET rate limiting
-        const rateLimitEffect = rateLimitMiddleware(req);
-        const { rateLimit, identity } = await Effect.runPromise(
-          Effect.provide(rateLimitEffect, RateLimitLeakyBucketLive)
-        );
-        
-        // Update stats
-        updateStats(!rateLimit.isAllowed, '/api/demo/leaky-bucket', identity.userId);
-        
-        // If rate limit exceeded, return 429
-        if (!rateLimit.isAllowed) {
-          const response = new Response(JSON.stringify({
-            error: 'Too Many Requests',
-            message: 'Rate limit exceeded using Leaky Bucket algorithm',
-          }), { 
-            status: 429,
-            headers: { 'Content-Type': 'application/json' }
-          });
-          
-          return applyRateLimitHeaders(response, rateLimit);
-        }
-        
-        // Normal response
-        const response = new Response(JSON.stringify({
-          message: "This endpoint uses Leaky Bucket rate limiting",
-          capacity_remaining: rateLimit.remaining,
-          retry_after: new Date(rateLimit.resetTime).toISOString()
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        return applyRateLimitHeaders(response, rateLimit);
-      } catch (error) {
-        console.error('Route handler error:', error);
-        return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-    },
-    
+    // Demo endpoint for fixed window
     "/api/demo/fixed-window": async (req) => {
       try {
         // Apply FIXED WINDOW rate limiting
@@ -310,15 +220,11 @@ const server = serve({
         active_strategy: process.env.RATE_LIMIT_STRATEGY || 'sliding-window',
         storage: process.env.USE_REDIS !== 'false' ? 'redis' : 'in-memory',
         demo_endpoints: [
-          '/api/demo/token-bucket',
-          '/api/demo/leaky-bucket',
           '/api/demo/fixed-window'
         ],
         available_strategies: [
           'sliding-window', 
-          'fixed-window',
-          'token-bucket',
-          'leaky-bucket'
+          'fixed-window'
         ]
       }), {
         status: 200,

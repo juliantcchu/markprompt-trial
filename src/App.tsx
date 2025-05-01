@@ -9,7 +9,6 @@ export function App() {
       padding: '2rem',
       margin: '0 auto', 
       width: '100vw',
-      height: '100vh'
     }}>
       <h1 style={{ color: 'black' }}>Rate Limiter with Effect</h1>
       <p style={{ color: 'black' }}>

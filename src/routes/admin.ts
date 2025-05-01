@@ -1,6 +1,7 @@
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import { setUserRateLimit } from '../ratelimiter/rateLimiter';
 import { rateLimitByRole, RateLimitConfigLive, RateLimitConfigProvider } from '../config/ratelimit';
+import { RedisClientLive } from '../ratelimiter/redis';
 
 interface RateLimitOverrideRequest {
   userId: string;
@@ -46,14 +47,20 @@ export const handleAdminRateLimitOverride = async (req: Request) => {
       windowMs: data.windowMs || rateLimitByRole.free.windowMs // Default to standard window
     });
     
-    // Run the effect with the config layer
+    // Run the effect with both Redis and config layers
+    const combinedLayer = Layer.merge(
+      RedisClientLive,
+      RateLimitConfigLive
+    );
+    
     await Effect.runPromise(
-      Effect.provide(setRateLimitEffect, RateLimitConfigLive)
+      Effect.provide(setRateLimitEffect, combinedLayer)
     );
     
     return new Response(JSON.stringify({ 
       success: true,
-      message: `Rate limit for user ${data.userId} set to ${data.maxRequests} requests per ${(data.windowMs || rateLimitByRole.free.windowMs) / 1000} seconds`
+      message: `Rate limit for user ${data.userId} set to ${data.maxRequests} requests per ${(data.windowMs || rateLimitByRole.free.windowMs) / 1000} seconds`,
+      persistenceType: process.env.USE_REDIS !== 'false' ? 'Redis' : 'In-Memory'
     }), { 
       status: 200,
       headers: { 'Content-Type': 'application/json' }
