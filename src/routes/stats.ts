@@ -1,4 +1,5 @@
-import { redisClient, inMemoryStore } from '../ratelimiter/redis';
+import { Effect, Option } from 'effect';
+import { RedisClient, RedisClientLive } from '../ratelimiter/redis';
 
 // Rate limit statistics
 let globalStats = {
@@ -54,8 +55,11 @@ export const updateStats = (
 // Get detailed stats about rate limiting
 export const getStatsHandler = async (req: Request) => {
   try {
-    // Get additional Redis metrics if available
-    const redisMetrics = await getRedisMetrics();
+    // Get additional Redis metrics using Effect
+    const redisMetricsEffect = getRedisMetrics();
+    const redisMetrics = await Effect.runPromise(
+      Effect.provide(redisMetricsEffect, RedisClientLive)
+    );
     
     const stats = {
       ...globalStats,
@@ -80,40 +84,52 @@ export const getStatsHandler = async (req: Request) => {
   }
 };
 
-// Get Redis metrics (or in-memory metrics if Redis is not available)
-const getRedisMetrics = async () => {
-  try {
-    if (redisClient.isOpen) {
-      // Get all rate limit keys
-      const keys = await redisClient.keys('ratelimit:*');
+// Get Redis metrics using Effect (or fake metrics if Redis is not available)
+const getRedisMetrics = (): Effect.Effect<
+  { activeKeys: number; totalKeys: number },
+  never,
+  RedisClient
+> => {
+  return Effect.gen(function* (_) {
+    // Try to get Redis service
+    const redisOption = yield* Effect.serviceOption(RedisClient);
+    
+    // Check if Redis is available and connected
+    if (Option.isSome(redisOption) && redisOption.value.isConnected) {
+      const redis = redisOption.value;
       
-      // Count active keys (those with at least one request in the current window)
-      let activeKeys = 0;
-      for (const key of keys) {
-        const count = await redisClient.zCard(key);
-        if (count > 0) {
-          activeKeys++;
+      return yield* Effect.tryPromise({
+        try: async () => {
+          // Get all rate limit keys
+          const keys = await redis.client.keys('ratelimit:*');
+          
+          // Count active keys (those with at least one request in the current window)
+          let activeKeys = 0;
+          for (const key of keys) {
+            const count = await redis.client.zCard(key);
+            if (count > 0) {
+              activeKeys++;
+            }
+          }
+          
+          return {
+            activeKeys,
+            totalKeys: keys.length
+          };
+        },
+        catch: (error) => {
+          console.error('Error getting Redis metrics:', error);
+          return new Error('Redis metrics error');
         }
-      }
-      
-      return {
-        activeKeys,
-        totalKeys: keys.length
-      };
+      }).pipe(
+        Effect.catchAll(error => {
+          console.error('Redis metrics error:', error);
+          return Effect.succeed({ activeKeys: 0, totalKeys: 0 });
+        })
+      );
     } else {
-      // In-memory metrics
-      return {
-        activeKeys: Object.keys(inMemoryStore).filter(key => 
-          Object.keys(inMemoryStore[key]).length > 0
-        ).length,
-        totalKeys: Object.keys(inMemoryStore).length
-      };
+      // If Redis is not available, return empty metrics
+      return { activeKeys: 0, totalKeys: 0 };
     }
-  } catch (error) {
-    console.error('Error getting Redis metrics:', error);
-    return {
-      activeKeys: 0,
-      totalKeys: 0
-    };
-  }
+  });
 }; 

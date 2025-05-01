@@ -1,21 +1,39 @@
 import { serve } from "bun";
 import index from "./index.html";
 import { Effect } from 'effect';
-import { connectRedis, closeRedis } from './ratelimiter/redis';
-import { rateLimitMiddleware, applyRateLimitHeaders } from './middleware/rateLimitMiddleware';
+import { 
+  rateLimitMiddleware, 
+  applyRateLimitHeaders, 
+  getRateLimitLayer,
+  RateLimitLive,
+  RateLimitTokenBucketLive,
+  RateLimitLeakyBucketLive,
+  RateLimitFixedWindowLive 
+} from './middleware/rateLimitMiddleware';
 import { handleAdminRateLimitOverride } from './routes/admin';
 import { getStatsHandler, updateStats } from './routes/stats';
 
-// Initialize Redis connection
-Effect.runPromise(connectRedis).catch(err => {
-  console.error('Redis connection error:', err);
-  console.log('Falling back to in-memory rate limiting');
-});
+// Get rate limiting strategy from env vars
+const getRateLimitingStrategy = () => {
+  const strategy = process.env.RATE_LIMIT_STRATEGY || 'sliding-window';
+  const useRedis = process.env.USE_REDIS !== 'false';
+  
+  console.log(`Using rate limiting strategy: ${strategy}, storage: ${useRedis ? 'Redis' : 'In-Memory'}`);
+  
+  return getRateLimitLayer(
+    strategy as any, // Type cast to satisfy TypeScript
+    useRedis
+  );
+};
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
+// Default rate limit layer
+const defaultRateLimitLayer = getRateLimitingStrategy();
+
+// No need to manually initialize Redis - it's handled by the Layer system
+
+// Graceful shutdown - Redis client is managed by the Layer system
+process.on('SIGINT', () => {
   console.log('Shutting down...');
-  await Effect.runPromise(closeRedis);
   process.exit(0);
 });
 
@@ -26,98 +44,286 @@ const server = serve({
 
     "/api/hello": {
       async GET(req) {
-        // Apply rate limiting
-        const { rateLimit, identity } = await rateLimitMiddleware(req);
-        
-        // Update stats
-        updateStats(!rateLimit.isAllowed, '/api/hello', identity.userId);
-        
-        // If rate limit exceeded, return 429
-        if (!rateLimit.isAllowed) {
+        try {
+          // Apply rate limiting with dependency injection
+          const rateLimitEffect = rateLimitMiddleware(req);
+          const { rateLimit, identity } = await Effect.runPromise(
+            Effect.provide(rateLimitEffect, defaultRateLimitLayer)
+          );
+          
+          // Update stats
+          updateStats(!rateLimit.isAllowed, '/api/hello', identity.userId);
+          
+          // If rate limit exceeded, return 429
+          if (!rateLimit.isAllowed) {
+            const response = new Response(JSON.stringify({
+              error: 'Too Many Requests',
+              message: 'Rate limit exceeded',
+            }), { 
+              status: 429,
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            return applyRateLimitHeaders(response, rateLimit);
+          }
+          
+          // Normal response
           const response = new Response(JSON.stringify({
-            error: 'Too Many Requests',
-            message: 'Rate limit exceeded',
-          }), { 
-            status: 429,
+            message: "Hello, world!",
+            method: "GET",
+          }), {
+            status: 200,
             headers: { 'Content-Type': 'application/json' }
           });
           
           return applyRateLimitHeaders(response, rateLimit);
+        } catch (error) {
+          console.error('Route handler error:', error);
+          return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
-        
-        // Normal response
-        const response = new Response(JSON.stringify({
-          message: "Hello, world!",
-          method: "GET",
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        return applyRateLimitHeaders(response, rateLimit);
       },
       async PUT(req) {
-        // Apply rate limiting
-        const { rateLimit, identity } = await rateLimitMiddleware(req);
-        
-        // Update stats
-        updateStats(!rateLimit.isAllowed, '/api/hello', identity.userId);
-        
-        // If rate limit exceeded, return 429
-        if (!rateLimit.isAllowed) {
+        try {
+          // Apply rate limiting with dependency injection
+          const rateLimitEffect = rateLimitMiddleware(req);
+          const { rateLimit, identity } = await Effect.runPromise(
+            Effect.provide(rateLimitEffect, defaultRateLimitLayer)
+          );
+          
+          // Update stats
+          updateStats(!rateLimit.isAllowed, '/api/hello', identity.userId);
+          
+          // If rate limit exceeded, return 429
+          if (!rateLimit.isAllowed) {
+            const response = new Response(JSON.stringify({
+              error: 'Too Many Requests',
+              message: 'Rate limit exceeded',
+            }), { 
+              status: 429,
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            return applyRateLimitHeaders(response, rateLimit);
+          }
+          
+          // Normal response
           const response = new Response(JSON.stringify({
-            error: 'Too Many Requests',
-            message: 'Rate limit exceeded',
-          }), { 
-            status: 429,
+            message: "Hello, world!",
+            method: "PUT",
+          }), {
+            status: 200,
             headers: { 'Content-Type': 'application/json' }
           });
           
           return applyRateLimitHeaders(response, rateLimit);
+        } catch (error) {
+          console.error('Route handler error:', error);
+          return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
-        
-        // Normal response
-        const response = new Response(JSON.stringify({
-          message: "Hello, world!",
-          method: "PUT",
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        return applyRateLimitHeaders(response, rateLimit);
       },
     },
 
     "/api/hello/:name": async (req) => {
-      // Apply rate limiting
-      const { rateLimit, identity } = await rateLimitMiddleware(req);
-      
-      // Update stats
-      updateStats(!rateLimit.isAllowed, '/api/hello/:name', identity.userId);
-      
-      // If rate limit exceeded, return 429
-      if (!rateLimit.isAllowed) {
+      try {
+        // Apply rate limiting with dependency injection
+        const rateLimitEffect = rateLimitMiddleware(req);
+        const { rateLimit, identity } = await Effect.runPromise(
+          Effect.provide(rateLimitEffect, defaultRateLimitLayer)
+        );
+        
+        // Update stats
+        updateStats(!rateLimit.isAllowed, '/api/hello/:name', identity.userId);
+        
+        // If rate limit exceeded, return 429
+        if (!rateLimit.isAllowed) {
+          const response = new Response(JSON.stringify({
+            error: 'Too Many Requests',
+            message: 'Rate limit exceeded',
+          }), { 
+            status: 429,
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          return applyRateLimitHeaders(response, rateLimit);
+        }
+        
+        const name = req.params.name;
         const response = new Response(JSON.stringify({
-          error: 'Too Many Requests',
-          message: 'Rate limit exceeded',
-        }), { 
-          status: 429,
+          message: `Hello, ${name}!`,
+        }), {
+          status: 200,
           headers: { 'Content-Type': 'application/json' }
         });
         
         return applyRateLimitHeaders(response, rateLimit);
+      } catch (error) {
+        console.error('Route handler error:', error);
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
-      
-      const name = req.params.name;
-      const response = new Response(JSON.stringify({
-        message: `Hello, ${name}!`,
+    },
+    
+    // Demo endpoints for different rate limiting strategies
+    "/api/demo/token-bucket": async (req) => {
+      try {
+        // Apply TOKEN BUCKET rate limiting
+        const rateLimitEffect = rateLimitMiddleware(req);
+        const { rateLimit, identity } = await Effect.runPromise(
+          Effect.provide(rateLimitEffect, RateLimitTokenBucketLive)
+        );
+        
+        // Update stats
+        updateStats(!rateLimit.isAllowed, '/api/demo/token-bucket', identity.userId);
+        
+        // If rate limit exceeded, return 429
+        if (!rateLimit.isAllowed) {
+          const response = new Response(JSON.stringify({
+            error: 'Too Many Requests',
+            message: 'Rate limit exceeded using Token Bucket algorithm',
+          }), { 
+            status: 429,
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          return applyRateLimitHeaders(response, rateLimit);
+        }
+        
+        // Normal response
+        const response = new Response(JSON.stringify({
+          message: "This endpoint uses Token Bucket rate limiting",
+          tokens_remaining: rateLimit.remaining,
+          reset_at: new Date(rateLimit.resetTime).toISOString()
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        return applyRateLimitHeaders(response, rateLimit);
+      } catch (error) {
+        console.error('Route handler error:', error);
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    },
+    
+    "/api/demo/leaky-bucket": async (req) => {
+      try {
+        // Apply LEAKY BUCKET rate limiting
+        const rateLimitEffect = rateLimitMiddleware(req);
+        const { rateLimit, identity } = await Effect.runPromise(
+          Effect.provide(rateLimitEffect, RateLimitLeakyBucketLive)
+        );
+        
+        // Update stats
+        updateStats(!rateLimit.isAllowed, '/api/demo/leaky-bucket', identity.userId);
+        
+        // If rate limit exceeded, return 429
+        if (!rateLimit.isAllowed) {
+          const response = new Response(JSON.stringify({
+            error: 'Too Many Requests',
+            message: 'Rate limit exceeded using Leaky Bucket algorithm',
+          }), { 
+            status: 429,
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          return applyRateLimitHeaders(response, rateLimit);
+        }
+        
+        // Normal response
+        const response = new Response(JSON.stringify({
+          message: "This endpoint uses Leaky Bucket rate limiting",
+          capacity_remaining: rateLimit.remaining,
+          retry_after: new Date(rateLimit.resetTime).toISOString()
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        return applyRateLimitHeaders(response, rateLimit);
+      } catch (error) {
+        console.error('Route handler error:', error);
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    },
+    
+    "/api/demo/fixed-window": async (req) => {
+      try {
+        // Apply FIXED WINDOW rate limiting
+        const rateLimitEffect = rateLimitMiddleware(req);
+        const { rateLimit, identity } = await Effect.runPromise(
+          Effect.provide(rateLimitEffect, RateLimitFixedWindowLive)
+        );
+        
+        // Update stats
+        updateStats(!rateLimit.isAllowed, '/api/demo/fixed-window', identity.userId);
+        
+        // If rate limit exceeded, return 429
+        if (!rateLimit.isAllowed) {
+          const response = new Response(JSON.stringify({
+            error: 'Too Many Requests',
+            message: 'Rate limit exceeded using Fixed Window algorithm',
+          }), { 
+            status: 429,
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          return applyRateLimitHeaders(response, rateLimit);
+        }
+        
+        // Normal response
+        const response = new Response(JSON.stringify({
+          message: "This endpoint uses Fixed Window rate limiting",
+          requests_remaining: rateLimit.remaining,
+          window_resets_at: new Date(rateLimit.resetTime).toISOString()
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        return applyRateLimitHeaders(response, rateLimit);
+      } catch (error) {
+        console.error('Route handler error:', error);
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    },
+    
+    // Rate limit information endpoint
+    "/api/rate-limit-info": async (req) => {
+      return new Response(JSON.stringify({
+        active_strategy: process.env.RATE_LIMIT_STRATEGY || 'sliding-window',
+        storage: process.env.USE_REDIS !== 'false' ? 'redis' : 'in-memory',
+        demo_endpoints: [
+          '/api/demo/token-bucket',
+          '/api/demo/leaky-bucket',
+          '/api/demo/fixed-window'
+        ],
+        available_strategies: [
+          'sliding-window', 
+          'fixed-window',
+          'token-bucket',
+          'leaky-bucket'
+        ]
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
-      
-      return applyRateLimitHeaders(response, rateLimit);
     },
     
     // Admin API to override rate limits
@@ -139,3 +345,4 @@ const server = serve({
 });
 
 console.log(`🚀 Server running at ${server.url}`);
+console.log(`Rate limiting: strategy=${process.env.RATE_LIMIT_STRATEGY || 'sliding-window'}, storage=${process.env.USE_REDIS !== 'false' ? 'Redis' : 'In-Memory'}`);

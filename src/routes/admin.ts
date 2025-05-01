@@ -1,5 +1,6 @@
+import { Effect } from 'effect';
 import { setUserRateLimit } from '../ratelimiter/rateLimiter';
-import { rateLimitByRole } from '../config/ratelimit';
+import { rateLimitByRole, RateLimitConfigLive, RateLimitConfigProvider } from '../config/ratelimit';
 
 interface RateLimitOverrideRequest {
   userId: string;
@@ -39,11 +40,16 @@ export const handleAdminRateLimitOverride = async (req: Request) => {
       });
     }
     
-    // Set rate limit override
-    setUserRateLimit(data.userId, {
+    // Set rate limit override using Effect
+    const setRateLimitEffect = setUserRateLimit(data.userId, {
       maxRequests: data.maxRequests,
       windowMs: data.windowMs || rateLimitByRole.free.windowMs // Default to standard window
     });
+    
+    // Run the effect with the config layer
+    await Effect.runPromise(
+      Effect.provide(setRateLimitEffect, RateLimitConfigLive)
+    );
     
     return new Response(JSON.stringify({ 
       success: true,
