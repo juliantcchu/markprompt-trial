@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <title>Rate Limiter Demo</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 2rem;
+        color: #333;
+        line-height: 1.6;
+      }
+      h1 {
+        color: #2c3e50;
+        margin-bottom: 1.5rem;
+      }
+      .container {
+        display: flex;
+        gap: 2rem;
+      }
+      .panel {
+        flex: 1;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 1rem;
+        background-color: #f9f9f9;
+      }
+      .form-group {
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+      }
+      select, input, button {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 1rem;
+      }
+      button {
+        background-color: #3498db;
+        color: white;
+        border: none;
+        cursor: pointer;
+        padding: 0.75rem;
+        margin-top: 1rem;
+      }
+      button:hover {
+        background-color: #2980b9;
+      }
+      #response {
+        overflow: auto;
+        max-height: 300px;
+        padding: 1rem;
+        background-color: #f0f0f0;
+        border-radius: 4px;
+        font-family: monospace;
+        white-space: pre-wrap;
+      }
+      .rate-info {
+        margin-top: 1rem;
+        padding: 0.5rem;
+        background-color: #e9f7fe;
+        border-radius: 4px;
+      }
+      .status-error {
+        color: #e74c3c;
+        font-weight: bold;
+      }
+      .status-success {
+        color: #27ae60;
+        font-weight: bold;
+      }
+      #requestLog {
+        margin-top: 1rem;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 0.5rem;
+        font-size: 0.9rem;
+      }
+      .log-item {
+        padding: 0.25rem 0;
+        border-bottom: 1px solid #eee;
+      }
+      .stats-container {
+        margin-top: 2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Rate Limiter Demo</h1>
+    
+    <div class="container">
+      <div class="panel">
+        <h2>Make API Requests</h2>
+        <div class="form-group">
+          <label for="endpoint">Endpoint:</label>
+          <select id="endpoint">
+            <option value="/api/hello">GET /api/hello</option>
+            <option value="/api/hello">PUT /api/hello</option>
+            <option value="/api/hello/world">GET /api/hello/world</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label for="token">User Token:</label>
+          <select id="token">
+            <option value="">No token (anonymous)</option>
+            <option value="test-free-user">Free User</option>
+            <option value="test-premium-user">Premium User</option>
+            <option value="test-admin-user">Admin User</option>
+          </select>
+        </div>
+        
+        <button id="sendRequest">Send Request</button>
+        
+        <div class="form-group rate-info">
+          <div>Status: <span id="status">-</span></div>
+          <div>Remaining: <span id="remaining">-</span></div>
+          <div>Reset: <span id="reset">-</span></div>
+        </div>
+        
+        <button id="sendBurst">Send 10 Requests in Burst</button>
+        
+        <div id="requestLog">
+          <div class="log-item">Request log will appear here...</div>
+        </div>
+      </div>
+      
+      <div class="panel">
+        <h2>Response</h2>
+        <div id="response">No response yet...</div>
+        
+        <div class="stats-container">
+          <h3>Rate Limit Stats</h3>
+          <button id="refreshStats">Refresh Stats</button>
+          <div id="statsOutput" style="margin-top: 1rem; max-height: 300px; overflow: auto;"></div>
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      const endpointSelect = document.getElementById('endpoint');
+      const tokenSelect = document.getElementById('token');
+      const sendButton = document.getElementById('sendRequest');
+      const burstButton = document.getElementById('sendBurst');
+      const responseArea = document.getElementById('response');
+      const statusElement = document.getElementById('status');
+      const remainingElement = document.getElementById('remaining');
+      const resetElement = document.getElementById('reset');
+      const requestLog = document.getElementById('requestLog');
+      const refreshStatsButton = document.getElementById('refreshStats');
+      const statsOutput = document.getElementById('statsOutput');
+      
+      // Add a log entry
+      function addLogEntry(message) {
+        const logItem = document.createElement('div');
+        logItem.className = 'log-item';
+        logItem.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+        requestLog.prepend(logItem);
+        
+        // Limit log entries
+        if (requestLog.children.length > 50) {
+          requestLog.removeChild(requestLog.lastChild);
+        }
+      }
+      
+      // Format the response and extract rate limit headers
+      function handleResponse(response, responseText) {
+        try {
+          const jsonResponse = JSON.parse(responseText);
+          responseArea.textContent = JSON.stringify(jsonResponse, null, 2);
+          
+          // Update rate limit info
+          statusElement.textContent = response.status === 429 ? 
+            'Rate Limited (429)' : 'Success';
+          statusElement.className = response.status === 429 ?
+            'status-error' : 'status-success';
+            
+          remainingElement.textContent = response.headers.get('X-RateLimit-Remaining') || '-';
+          
+          const resetTime = response.headers.get('X-RateLimit-Reset');
+          if (resetTime) {
+            const date = new Date(parseInt(resetTime) * 1000);
+            resetElement.textContent = date.toLocaleTimeString();
+          } else {
+            resetElement.textContent = '-';
+          }
+          
+          // Log the result
+          const logMessage = `${response.status} ${response.statusText} - Remaining: ${remainingElement.textContent}`;
+          addLogEntry(logMessage);
+        } catch (error) {
+          responseArea.textContent = responseText;
+          console.error('Error parsing response:', error);
+        }
+      }
+      
+      // Make a request with the selected parameters
+      async function makeRequest() {
+        const endpoint = endpointSelect.value;
+        const token = tokenSelect.value;
+        const method = endpoint === '/api/hello' && 
+                       endpointSelect.options[endpointSelect.selectedIndex].text.startsWith('PUT') ? 
+                       'PUT' : 'GET';
+                       
+        try {
+          const headers = {};
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
+          
+          const response = await fetch(endpoint, {
+            method,
+            headers
+          });
+          
+          const responseText = await response.text();
+          handleResponse(response, responseText);
+        } catch (error) {
+          responseArea.textContent = `Error: ${error.message}`;
+          console.error('Request failed:', error);
+        }
+      }
+      
+      // Send a burst of requests
+      async function sendBurstRequests() {
+        burstButton.disabled = true;
+        
+        for (let i = 0; i < 10; i++) {
+          await makeRequest();
+          // Small delay to ensure sequence
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        burstButton.disabled = false;
+      }
+      
+      // Get rate limit stats
+      async function getStats() {
+        try {
+          const response = await fetch('/api/rate-limit-stats');
+          const stats = await response.json();
+          statsOutput.textContent = JSON.stringify(stats, null, 2);
+        } catch (error) {
+          statsOutput.textContent = `Error getting stats: ${error.message}`;
+        }
+      }
+      
+      // Set up event listeners
+      sendButton.addEventListener('click', makeRequest);
+      burstButton.addEventListener('click', sendBurstRequests);
+      refreshStatsButton.addEventListener('click', getStats);
+      
+      // Load initial stats
+      getStats();
+    </script>
+  </body>
+</html>
